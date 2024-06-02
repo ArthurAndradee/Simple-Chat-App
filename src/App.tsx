@@ -1,60 +1,83 @@
-import React, { useEffect, useState } from 'react';
+import { io, Socket } from 'socket.io-client';
+import './App.css';
+import { useState, useEffect, useRef } from 'react';
 
-const WebSocketComponent: React.FC = () => {
-  const [socket, setSocket] = useState<WebSocket | null>(null);
-  const [message, setMessage] = useState<string>('');
-  const [messages, setMessages] = useState<string[]>([]);
+interface Message {
+  name: string;
+  message: string;
+}
+
+function App() {
+  const [userMessage, setUserMessage] = useState('');
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [username, setUsername] = useState<string | null>(null);
+  const [connected, setConnected] = useState<boolean>(false);
+  const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:5000');
-    setSocket(ws);
+    const socket = io('http://localhost:5000');
+    socketRef.current = socket;
 
-    ws.onopen = () => {
-      console.log('Connected to WebSocket server');
-    };
+    const name = prompt("Please state your name:");
+    if (name) {
+      setUsername(name);
+      setConnected(true); // User is connected
+      setMessages((prevMessages) => [...prevMessages, { name: 'System', message: "You joined" }]);
+      socket.emit('User joined', name);
+    }
 
-    ws.onmessage = (event) => {
-      const receivedMessage = event.data;
-      console.log('Message from server:', receivedMessage);
-      setMessages((prevMessages) => [...prevMessages, receivedMessage]);
-    };
+    socket.on('chat-message', (data: Message) => {
+      setMessages((prevMessages) => [...prevMessages, data]);
+    });
 
-    ws.onclose = () => {
-      console.log('Disconnected from WebSocket server');
-    };
+    socket.on('user-joined', ({ name }: { name: string }) => {
+      setMessages((prevMessages) => [...prevMessages, { name: 'System', message: `${name} joined` }]);
+    });
+
+    socket.on('user-disconnected', ({ name }: { name: string }) => {
+      setMessages((prevMessages) => [...prevMessages, { name: 'System', message: `${name} disconnected` }]);
+    });
+
+    socket.on('disconnect', () => {
+      setConnected(false);
+    });
 
     return () => {
-      ws.close();
+      socket.off('chat-message');
+      socket.off('user-joined');
+      socket.off('user-disconnected');
+      socket.disconnect();
     };
   }, []);
 
-  const sendMessage = () => {
-    if (socket && message) {
-      socket.send(message);
-      setMessage('');
+  const handleMessageInput = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setUserMessage(event.target.value);
+  };
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (username && connected) { // Only allow message submission if connected
+      socketRef.current?.emit('send-chat-message', { name: username, message: userMessage });
     }
+    setUserMessage('');
   };
 
   return (
     <div>
-      <h1>WebSocket Chat</h1>
-      <input
-        type="text"
-        value={message}
-        onChange={(e) => setMessage(e.target.value)}
-        placeholder="Type a message..."
-      />
-      <button onClick={sendMessage}>Send</button>
-      <div>
-        <h2>Messages</h2>
-        <ul>
-          {messages.map((msg, index) => (
-            <li key={index}>{msg}</li>
-          ))}
-        </ul>
+      <form onSubmit={handleSubmit}>
+        <input type='text' value={userMessage} onChange={handleMessageInput} disabled={!connected} />
+        <button type='submit' disabled={!connected}>Send</button>
+      </form>
+      <div className='message-container'>
+        {messages.map((message, index) => (
+          <div key={index}>
+            <strong>{message.name}:</strong> {message.message}
+          </div>
+        ))}
       </div>
+      <div>{connected ? 'Connected' : 'Disconnected'}</div>
     </div>
   );
-};
+}
 
-export default WebSocketComponent;
+export default App;
